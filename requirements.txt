@@ -1,0 +1,7 @@
+pypdf==6.21.4
+pytest==8.4.2
+# Only needed for a live deployment, not for the demos or tests:
+# Flask==3.1.3
+# gunicorn==23.0.0
+# google-auth==2.59.1
+# requests==2.34.2

@@ -1,0 +1,1133 @@
+{
+  "name": "Case Quote",
+  "nodes": [
+    {
+      "id": "c830ed42-44fc-408f-b46b-c0a5a1804bba",
+      "name": "Quote Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        300
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "case-quote",
+        "responseMode": "responseNode",
+        "options": {
+          "allowedOrigins": "*"
+        }
+      },
+      "webhookId": "b304b5c0-9f7b-43f7-85b4-af1008865273"
+    },
+    {
+      "id": "bfe5a00a-7602-4d46-9ab5-e44cc8b72a57",
+      "name": "Get Prospect",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        220,
+        300
+      ],
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "YOUR_CASE_TRACKER_SHEET_ID"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "id",
+          "value": "YOUR_PROSPECTS_TAB_GID"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "ThreadID",
+              "lookupValue": "={{ String($('Quote Webhook').first().json.body?.threadId || '').trim() || '__none__' }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "alwaysOutputData": true,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "REPLACE_ME",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "id": "e3d9e33c-4f22-4f80-987b-d3cca1abd45e",
+      "name": "Decide",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        300
+      ],
+      "parameters": {
+        "jsCode": "// Decides what a press does. Only ids, the case name and counts pass through n8n: it never lists\n// or opens the uploaded files or the filled quote sheet (patient data).\nconst str = (v) => String(v == null ? '' : v).trim();\nconst body = $('Quote Webhook').first().json.body || {};\nconst action = str(body.action);\nconst threadId = str(body.threadId);\nconst row = $('Get Prospect').first().json || {};\nconst out = {\n  action, threadId,\n  rowNumber: row.row_number,\n  caseName: str(row['Case Name']) || 'Untitled case',\n  folderId: str(row.FolderID_Quote),\n  sheetId: str(row.FileID_Quote),\n  status: str(row.Status_Quote),\n};\nconst refuse = (message) => ({ ...out, route: 'reply', reply: { ok: false, message } });\n\n// A second press within a minute is a double click.\nconst sd = $getWorkflowStaticData('global');\nsd.recent = sd.recent || {};\nconst key = action + ':' + threadId;\nconst now = Date.now();\nfor (const k of Object.keys(sd.recent)) if (now - sd.recent[k] > 60000) delete sd.recent[k];\n\nlet result;\nif (!threadId || !row.row_number || str(row.ThreadID) !== threadId) {\n  result = refuse(\"Couldn't find this case in the case tracker.\");\n} else if (action === 'create') {\n  if (out.folderId && out.sheetId) {\n    result = { ...out, route: 'reply', reply: { ok: true, folderId: out.folderId, sheetId: out.sheetId } };\n  } else if (sd.recent[key]) {\n    result = refuse('Already making the folder. Give it a few seconds.');\n  } else {\n    result = { ...out, route: 'create' };\n  }\n} else if (action === 'start') {\n  // A reading normally takes minutes; after 10 hours a Running line is stale and may be retried.\n  const m = /^Running \u00b7 started (\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2})/.exec(out.status);\n  const started = m ? DateTime.fromFormat(m[1], 'yyyy-MM-dd HH:mm', { zone: 'America/New_York' }) : null;\n  if (!out.folderId || !out.sheetId) {\n    result = refuse('Press Create Quote first.');\n  } else if (sd.recent[key] || (started && started.isValid && now - started.toMillis() < 10 * 3600 * 1000)) {\n    result = refuse('Already reading this case. See Quote appears when it is done.');\n  } else {\n    result = { ...out, route: 'start' };\n  }\n} else {\n  result = refuse('Unknown request.');\n}\nif (result.route !== 'reply') sd.recent[key] = now;\nreturn [{ json: result }];"
+      }
+    },
+    {
+      "id": "62809d30-42f0-4db3-b458-0dbc45158a55",
+      "name": "Act?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        660,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "9ec902dd-a3bf-448e-b638-25d1777d68c4",
+              "leftValue": "={{ $json.route !== 'reply' }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "9d604c93-8f43-48d4-a1f1-437de60c6b91",
+      "name": "Reply",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        880,
+        480
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json.reply) }}",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Cache-Control",
+                "value": "no-store"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "31b9a6d5-ae97-47e7-a0f6-d344a4cc2294",
+      "name": "Create?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        880,
+        200
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "6cc765f0-7fdd-4fa4-84ab-ceacccd4f825",
+              "leftValue": "={{ $json.route === 'create' }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "0b7771ad-fa9f-4850-a329-8fa66940e0e5",
+      "name": "Create Folder",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1100,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://www.googleapis.com/drive/v3/files?supportsAllDrives=true&fields=id",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleDriveOAuth2Api",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ name: 'Quote \u2013 ' + $('Decide').first().json.caseName, mimeType: 'application/vnd.google-apps.folder', parents: ['YOUR_QUOTES_FOLDER_ID'] }) }}"
+      },
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "REPLACE_ME",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "id": "82355b96-ad6d-4216-a77c-512df8fae96a",
+      "name": "Copy Template",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1320,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://www.googleapis.com/drive/v3/files/YOUR_QUOTE_TEMPLATE_SHEET_ID/copy?supportsAllDrives=true&fields=id",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleDriveOAuth2Api",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ name: 'Quote \u2013 ' + $('Decide').first().json.caseName, parents: [$json.body?.id] }) }}"
+      },
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "REPLACE_ME",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "id": "63ea0115-5c2e-4f2b-8cf4-56ecfa3c17b8",
+      "name": "Made?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1540,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "bb3dad7e-b92c-4dca-8b5c-d8d5633de6f0",
+              "leftValue": "={{ $('Create Folder').first().json.statusCode === 200 && $json.statusCode === 200 }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "e8c8a3ae-7b37-44ec-9dc7-e2717c898760",
+      "name": "Save Quote IDs",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1760,
+        -100
+      ],
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "YOUR_CASE_TRACKER_SHEET_ID"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "id",
+          "value": "YOUR_PROSPECTS_TAB_GID"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "row_number": "={{ $('Decide').first().json.rowNumber }}",
+            "FolderID_Quote": "={{ $('Create Folder').first().json.body.id }}",
+            "FileID_Quote": "={{ $('Copy Template').first().json.body.id }}",
+            "Status_Quote": "={{ \"Waiting for files \u00b7 made \" + $now.setZone('America/New_York').toFormat('yyyy-MM-dd') }}"
+          },
+          "matchingColumns": [
+            "row_number"
+          ],
+          "schema": [
+            {
+              "id": "row_number",
+              "displayName": "row_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "FolderID_Quote",
+              "displayName": "FolderID_Quote",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "FileID_Quote",
+              "displayName": "FileID_Quote",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Status_Quote",
+              "displayName": "Status_Quote",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "REPLACE_ME",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "id": "df934191-33f7-4125-8012-f3d5414b71e1",
+      "name": "Reply: Made",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1980,
+        -100
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true, folderId: $('Create Folder').first().json.body.id, sheetId: $('Copy Template').first().json.body.id }) }}",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Cache-Control",
+                "value": "no-store"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "437e5ff8-39f5-4ae7-bb89-5bf03124912b",
+      "name": "Reply: Not Made",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1760,
+        100
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: false, message: \"Couldn't make the quote folder. The admin has been emailed.\" }) }}",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Cache-Control",
+                "value": "no-store"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "c6449d56-01f5-48b1-a103-595edd112038",
+      "name": "Build Failure Email",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1980,
+        100
+      ],
+      "parameters": {
+        "jsCode": "const d = $('Decide').first().json;\nconst r = $input.first().json;\nconst err = (r.body && r.body.error) || {};\nreturn [{ json: {\n  emailSubject: 'Case quote: ' + (d.route === 'create' ? 'could not make the folder' : 'could not start Google') + ' for ' + d.caseName,\n  emailBody: `Someone pressed ${d.route === 'create' ? 'Create Quote' : 'Start reading'} on ${d.caseName}.\\n\\n` +\n    `HTTP ${r.statusCode} \u00b7 ${String(err.status || '')} \u00b7 ${String(err.message || '').slice(0, 200)}\\n\\n` +\n    'Most likely cause: a Google credential in n8n needs reconnecting.' } }];"
+      }
+    },
+    {
+      "id": "0bc96433-2182-4e1d-9169-e3f138f33500",
+      "name": "Start Google Run",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1100,
+        400
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://workflowexecutions.googleapis.com/v1/projects/YOUR_GCP_PROJECT/locations/YOUR_REGION/workflows/Build-Case-Quote/executions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleOAuth2Api",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ argument: JSON.stringify({ folder_id: $('Decide').first().json.folderId, sheet_id: $('Decide').first().json.sheetId }) }) }}"
+      },
+      "credentials": {
+        "googleOAuth2Api": {
+          "id": "REPLACE_ME",
+          "name": "Google Cloud account"
+        }
+      }
+    },
+    {
+      "id": "a48776b0-124c-4dce-aefb-8a679390d77a",
+      "name": "Started?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1320,
+        400
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "ee0fa012-1dc1-4bd6-a01e-1ae7a3d49d06",
+              "leftValue": "={{ $json.statusCode === 200 }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "2ec9346c-f326-4ef4-9c63-9f85abebdade",
+      "name": "Mark Running",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1540,
+        300
+      ],
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "YOUR_CASE_TRACKER_SHEET_ID"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "id",
+          "value": "YOUR_PROSPECTS_TAB_GID"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "row_number": "={{ $('Decide').first().json.rowNumber }}",
+            "Status_Quote": "={{ 'Running \u00b7 started ' + $now.setZone('America/New_York').toFormat('yyyy-MM-dd HH:mm') }}"
+          },
+          "matchingColumns": [
+            "row_number"
+          ],
+          "schema": [
+            {
+              "id": "row_number",
+              "displayName": "row_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Status_Quote",
+              "displayName": "Status_Quote",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "REPLACE_ME",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "id": "c1a469bd-bd2c-46fd-b99b-98e63d5cb941",
+      "name": "Reply: Started",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1760,
+        300
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true, message: 'Reading started. See Quote appears when it is done.' }) }}",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Cache-Control",
+                "value": "no-store"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "a22d246f-187b-4536-82a4-360ef1979cda",
+      "name": "Wait 2 Minutes",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        1980,
+        300
+      ],
+      "parameters": {
+        "amount": 2,
+        "unit": "minutes"
+      },
+      "webhookId": "bccffcf6-d246-487a-8dde-832cf14b73bb"
+    },
+    {
+      "id": "84272195-79ce-45c0-be02-0f52ba0a6632",
+      "name": "Check Run",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2200,
+        300
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ 'https://workflowexecutions.googleapis.com/v1/' + $('Start Google Run').first().json.body.name }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleOAuth2Api",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "googleOAuth2Api": {
+          "id": "REPLACE_ME",
+          "name": "Google Cloud account"
+        }
+      }
+    },
+    {
+      "id": "2774a662-448c-4a93-a772-4b1019ffdc50",
+      "name": "Still Running?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2420,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "f548bdd6-0145-4d7b-8715-1fcddab3bd7f",
+              "leftValue": "={{ ($json.statusCode !== 200 || $json.body?.state === 'ACTIVE') && $runIndex < 300 }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "708656e1-bc53-427c-8823-924834ca4e4e",
+      "name": "Build Done Status",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2640,
+        400
+      ],
+      "parameters": {
+        "jsCode": "// Turns Google's answer into the status line the user sees. Counts only.\nconst str = (v) => String(v == null ? '' : v).trim();\nconst d = $('Decide').first().json;\nconst check = $input.first().json;   // Check Run's last answer\nconst today = $now.setZone('America/New_York').toFormat('yyyy-MM-dd');\nconst n = (x) => Number(x || 0).toLocaleString('en-US');\nconst STAGES = {\n  no_pdf_files: 'no PDFs in the folder',\n  no_readable_pages: \"the PDFs couldn't be opened\",\n  too_many_pages: 'over 20,000 pages',\n  not_a_quote_sheet: \"the quote sheet's layout was changed\",\n  too_many_sections_unread: \"Google's AI was too busy, try again later\",\n};\n// Plain words for the admin's email. Codes come from Google; none of this holds record data.\nconst why = (code) => ({\n  429: \"Google's AI was too busy and turned the requests away (error 429).\",\n  400: \"Google's AI refused a section as invalid (error 400). Trying again won't help; it needs a look.\",\n  403: \"Google refused permission (error 403). A setting needs checking; trying again won't help.\",\n}[code] || ([500, 502, 503, 504].includes(code) ? `Google's AI had a temporary problem on its side (error ${code}).` :\n  code ? `Google's AI answered with error ${code}.` : \"Google's AI gave no usable answer, or no error code was recorded.\"));\nconst WHAT = {\n  too_many_sections_unread: 'Too many sections went unread (more than 1 in 10), so no quote was written.',\n  ai_read: \"The AI couldn't read a section after all its tries, so no quote was written.\",\n  ai_read_careful: \"The AI's careful reading of a billing section failed after all its tries, so no quote was written.\",\n  ai_unreadable_answer: \"The AI's answer for a section was garbled every time, so no quote was written.\",\n  ai_incomplete_answer: 'The AI kept cutting its answer short on a section, so no quote was written.',\n};\nlet result = {}, state = '';\nif (check.statusCode === 200 && check.body) {\n  state = str(check.body.state);\n  try { result = JSON.parse(check.body.result || '{}'); } catch (e) { result = {}; }\n}\nlet status, alertAdmin = false, detail = '', subject = 'Case quote stopped: ' + d.caseName, opening = `The quote reading for ${d.caseName} stopped.`;\nif (state === 'SUCCEEDED' && result.status === 'done') {\n  // The quote sheet sits in the same folder, so one non-PDF file is always the sheet itself.\n  const skipped = Math.max(0, Number(result.files_not_pdf || 0) - 1) + Number(result.files_unreadable || 0);\n  status = `Done ${today} \u00b7 ${n(result.providers)} providers \u00b7 ${n(result.pages)} pages \u00b7 ${n(result.billing_lines)} lines` +\n    (skipped ? ` \u00b7 ${skipped} file${skipped === 1 ? '' : 's'} not read` : '') +\n    (result.pages_not_read ? ` \u00b7 ${n(result.pages_not_read)} pages the AI could not read` : '') +\n    (result.zip_files ? ` \u00b7 ${n(result.zip_files)} zip file${result.zip_files === 1 ? '' : 's'}: check they were unzipped` : '');\n  if (result.zip_files && !result.sections_not_read) {\n    alertAdmin = true;\n    subject = 'Case quote finished, check the zip files: ' + d.caseName;\n    opening = `The quote for ${d.caseName} finished, but the folder has ${n(result.zip_files)} zip file${result.zip_files === 1 ? '' : 's'}. The reader can't open zip files. ` +\n      'If they were not unzipped into the folder, the quote is too low: unzip them and press Start reading again. If they were, this is fine.';\n  }\n  if (result.sections_not_read) {\n    alertAdmin = true;\n    subject = 'Case quote finished with a gap: ' + d.caseName;\n    opening = `The quote for ${d.caseName} finished, but ${n(result.pages_not_read)} of its ${n(result.pages)} pages went unread ` +\n      `(${n(result.sections_not_read)} of ${n(result.chunks)} sections).\\n\\nWhy: ${why(Number(result.ai_http_status))}\\n` +\n      `Those pages are on the \"Other pages \u2013 AI could not read\" row, and the Where Found tab shows which file and pages. ` +\n      `The provider and billing counts may be low. Pressing Start reading again re-reads the whole case.` +\n      (result.zip_files ? `\\n\\nThe folder also has ${n(result.zip_files)} zip file(s), which the reader can't open. Check they were unzipped.` : '');\n    detail = `stage ${str(result.ai_stage) || '-'}, error ${str(result.ai_http_status) || 'none recorded'}`;\n  }\n} else if (state === 'SUCCEEDED' && STAGES[result.status === 'failed' ? result.stage : '']) {\n  status = `Stopped ${today} \u00b7 ${STAGES[result.stage]}`;\n  alertAdmin = result.stage !== 'no_pdf_files';\n  detail = 'stage ' + result.stage + (result.http_status ? ', error ' + result.http_status : '');\n  if (WHAT[result.stage]) opening += `\\n\\nWhat happened: ${WHAT[result.stage]}\\nWhy: ${why(Number(result.http_status))}\\n` +\n    'What to do: press Start reading again. Early morning has been the quietest time for the AI.';\n} else {\n  status = `Stopped ${today} \u00b7 something went wrong \u00b7 admin emailed`;\n  alertAdmin = true;\n  if (WHAT[result.stage]) opening += `\\n\\nWhat happened: ${WHAT[result.stage]}\\nWhy: ${why(Number(result.http_status))}\\n` +\n    'What to do: press Start reading again. Early morning has been the quietest time for the AI.';\n  detail = state ? `Google state ${state}, stage ${str(result.stage) || '-'}` + (result.http_status ? `, error ${result.http_status}` : '') :\n    `n8n could not read the Google run (HTTP ${check.statusCode}) after about 10 hours of checks`;\n}\nreturn [{ json: { status, alertAdmin,\n  emailSubject: subject,\n  emailBody: `${opening}\\n\\nDetail: ${detail}\\nGoogle run: ${str($('Start Google Run').first().json.body?.name)}\\n` +\n    `Quote sheet: https://docs.google.com/spreadsheets/d/${d.sheetId}\\n\\nThe case row now says: ${status}` } }];"
+      }
+    },
+    {
+      "id": "72579ad8-3d34-450e-a5a7-c53f169abf48",
+      "name": "Write Done Status",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        2860,
+        400
+      ],
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "YOUR_CASE_TRACKER_SHEET_ID"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "id",
+          "value": "YOUR_PROSPECTS_TAB_GID"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "row_number": "={{ $('Decide').first().json.rowNumber }}",
+            "Status_Quote": "={{ $('Build Done Status').first().json.status }}"
+          },
+          "matchingColumns": [
+            "row_number"
+          ],
+          "schema": [
+            {
+              "id": "row_number",
+              "displayName": "row_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Status_Quote",
+              "displayName": "Status_Quote",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "REPLACE_ME",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "id": "3b553b17-1970-4519-8d04-a15d843b7a3e",
+      "name": "Alert Admin?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3080,
+        400
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "11c97dd0-7f55-4deb-9e99-9292d7387487",
+              "leftValue": "={{ $('Build Done Status').first().json.alertAdmin }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "cdbcee1e-cb5c-4b5e-8dd8-73c2d5f3f25d",
+      "name": "Done Email Fields",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        3300,
+        400
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a",
+              "name": "emailSubject",
+              "value": "={{ $('Build Done Status').first().json.emailSubject }}",
+              "type": "string"
+            },
+            {
+              "id": "b",
+              "name": "emailBody",
+              "value": "={{ $('Build Done Status').first().json.emailBody }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "786b3ad6-f30b-4708-a7d4-e0b34cf65c82",
+      "name": "Reply: Not Started",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1540,
+        500
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: false, message: \"Couldn't start the reading. The admin has been emailed.\" }) }}",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Cache-Control",
+                "value": "no-store"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "6c44169d-8d0e-4c79-8f0c-fcd5ed4ae66e",
+      "name": "Email Admin",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        3520,
+        200
+      ],
+      "parameters": {
+        "sendTo": "admin@example.com",
+        "subject": "={{ $json.emailSubject }}",
+        "emailType": "text",
+        "message": "={{ $json.emailBody }}",
+        "options": {
+          "appendAttribution": false,
+          "senderName": "n8n Case Quote"
+        }
+      },
+      "webhookId": "27cdf1d6-f9e5-445c-a69c-8f51b12ed6cb",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "REPLACE_ME",
+          "name": "Gmail account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Quote Webhook": {
+      "main": [
+        [
+          {
+            "node": "Get Prospect",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Prospect": {
+      "main": [
+        [
+          {
+            "node": "Decide",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Decide": {
+      "main": [
+        [
+          {
+            "node": "Act?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Act?": {
+      "main": [
+        [
+          {
+            "node": "Create?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create?": {
+      "main": [
+        [
+          {
+            "node": "Create Folder",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Start Google Run",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Folder": {
+      "main": [
+        [
+          {
+            "node": "Copy Template",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Copy Template": {
+      "main": [
+        [
+          {
+            "node": "Made?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Made?": {
+      "main": [
+        [
+          {
+            "node": "Save Quote IDs",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Reply: Not Made",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Quote IDs": {
+      "main": [
+        [
+          {
+            "node": "Reply: Made",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reply: Not Made": {
+      "main": [
+        [
+          {
+            "node": "Build Failure Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Failure Email": {
+      "main": [
+        [
+          {
+            "node": "Email Admin",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Start Google Run": {
+      "main": [
+        [
+          {
+            "node": "Started?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Started?": {
+      "main": [
+        [
+          {
+            "node": "Mark Running",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Reply: Not Started",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reply: Not Started": {
+      "main": [
+        [
+          {
+            "node": "Build Failure Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Running": {
+      "main": [
+        [
+          {
+            "node": "Reply: Started",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reply: Started": {
+      "main": [
+        [
+          {
+            "node": "Wait 2 Minutes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait 2 Minutes": {
+      "main": [
+        [
+          {
+            "node": "Check Run",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Run": {
+      "main": [
+        [
+          {
+            "node": "Still Running?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Still Running?": {
+      "main": [
+        [
+          {
+            "node": "Wait 2 Minutes",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Done Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Done Status": {
+      "main": [
+        [
+          {
+            "node": "Write Done Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write Done Status": {
+      "main": [
+        [
+          {
+            "node": "Alert Admin?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Alert Admin?": {
+      "main": [
+        [
+          {
+            "node": "Done Email Fields",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Done Email Fields": {
+      "main": [
+        [
+          {
+            "node": "Email Admin",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

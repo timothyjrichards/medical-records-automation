@@ -1,0 +1,28 @@
+{
+  "_note": "Entirely made-up sample data. No real people, providers, cases, bills or files. Each saved_ai_answer is in the exact shape Gemini returns (see reader.SCHEMA).",
+  "files": [
+    {"id": "demo-file-01", "name": "Records from attorney - part 1.pdf", "mime": "application/pdf", "page_count": 6,
+     "saved_ai_answer": [
+       {"page": 1, "page_kind": "legal_or_admin", "practice_name": "", "provider_name": "", "is_bill": false, "lines": []},
+       {"page": 2, "page_kind": "medical_record", "practice_name": "Lakeside Orthopedics", "provider_name": "Dana Example, MD", "is_bill": false, "lines": []},
+       {"page": 3, "page_kind": "medical_record", "practice_name": "LAKESIDE ORTHOPEDICS, INC.", "provider_name": "", "is_bill": false, "lines": []},
+       {"page": 4, "page_kind": "bill", "practice_name": "Lakeside Ortho", "provider_name": "", "is_bill": true, "lines": [
+         {"date_of_service": "2024-01-15", "code": "99204", "billed": "350.00"},
+         {"date_of_service": "2024-01-15", "code": "73721", "billed": "1200.00"},
+         {"date_of_service": "2024-02-12", "code": "99214", "billed": "210.00"}]},
+       {"page": 5, "page_kind": "medical_record", "practice_name": "", "provider_name": "Pat Placeholder, DC", "is_bill": false, "lines": []},
+       {"page": 6, "page_kind": "blank", "practice_name": "", "provider_name": "", "is_bill": false, "lines": []}
+     ]},
+    {"id": "demo-file-02", "name": "Records from attorney - part 2.pdf", "mime": "application/pdf", "page_count": 5,
+     "saved_ai_answer": [
+       {"page": 1, "page_kind": "medical_record", "practice_name": "Riverbend Physical Therapy", "provider_name": "Pat Placeholder, DC", "is_bill": false, "lines": []},
+       {"page": 2, "page_kind": "medical_record", "practice_name": "Riverbend Physical Therapy", "provider_name": "", "is_bill": false, "lines": []},
+       {"page": 3, "page_kind": "bill", "practice_name": "Riverbend Physical Therapy", "provider_name": "", "is_bill": true, "lines": [
+         {"date_of_service": "2024-03-01", "code": "97110", "billed": "95.00"},
+         {"date_of_service": "2024-03-01", "code": "97140", "billed": "85.00"}]},
+       {"page": 4, "page_kind": "medical_record", "practice_name": "Example Health - North Clinic", "provider_name": "Lee Sample, MD", "is_bill": false, "lines": []}
+     ]},
+    {"id": "demo-file-03", "name": "MRI disc.zip", "mime": "application/zip"},
+    {"id": "demo-file-04", "name": "IMG_0001.jpg", "mime": "image/jpeg"}
+  ]
+}

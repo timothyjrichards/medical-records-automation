@@ -1,0 +1,22 @@
+# Secrets and local settings - never commit these
+.env
+*.env.local
+credentials*.json
+service-account*.json
+token*.json
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+
+# Real case files must never be added to this repo
+*.pdf
+*.zip
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/

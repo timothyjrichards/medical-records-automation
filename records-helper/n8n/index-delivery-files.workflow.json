@@ -1,0 +1,886 @@
+{
+  "name": "Index Delivery Files",
+  "nodes": [
+    {
+      "id": "4ff79330-b5f5-4285-b3c5-e31e13bba4fd",
+      "name": "Daily 7:30am ET",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 30 7 * * *"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "812733b5-79f3-4507-8363-71131aab234c",
+      "name": "Run Now Trigger",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        200
+      ],
+      "parameters": {
+        "inputSource": "passthrough"
+      }
+    },
+    {
+      "id": "171c289b-7e48-48a7-889d-d56872f7de60",
+      "name": "CONFIG",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "jsCode": "/* Everything that identifies a system lives here, so no other node carries a literal id.\n   Deliveries is a Softr Tables table; its API addresses fields by id. Names beside them are for the reader. */\nreturn [{\n  json: {\n    // true when a 'Run now' button in the app started this run\n    RUN_NOW: $input.first().json.runNow === true,\n    SOFTR_DB: 'YOUR_SOFTR_DATABASE_ID',\n    SOFTR_FILES: 'YOUR_SOFTR_DELIVERIES_TABLE_ID',\n    PAGE_LIMIT: 200,   // the Softr Tables API caps a page at 200 and silently clamps anything bigger\n\n    FF_DATE: 'FIELD_ID', FF_CASE_ID: 'FIELD_ID',\n    FF_FOLDER: 'FIELD_ID',      // Folder ID\n    FF_STATUS: 'FIELD_ID',      // Status - SELECT: Waiting for files / Uploaded / Indexed / Needs a look\n    FF_LOOK: 'FIELD_ID',        // Needs a look - short reason, never a file name\n    FF_BY: 'FIELD_ID', FF_ON: 'FIELD_ID', FF_COUNT: 'FIELD_ID', FF_OTHER: 'FIELD_ID',\n    FF_INDEXED: 'FIELD_ID', FF_NUMBERS: 'FIELD_ID',   // Indexed count, Numbers used\n\n    // Only deliveries that are still moving. \"Indexed\" is set by the naming step.\n    STATUSES: ['Waiting for files', 'Uploaded'],\n    // About 1-3 deliveries arrive a day. More than this many open ones means a filter is wrong.\n    MAX_ROWS: 60,\n    SHEET_PREFIX: 'Files Received Index \u2013 ',\n  },\n}];\n"
+      }
+    },
+    {
+      "id": "9be8f92e-6eb1-452a-8ec1-a942d88e5513",
+      "name": "Fetch Files",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "url": "={{ 'https://tables-api.softr.io/api/v1/databases/' + $('CONFIG').first().json.SOFTR_DB + '/tables/' + $('CONFIG').first().json.SOFTR_FILES + '/records' }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "limit",
+              "value": "={{ $('CONFIG').first().json.PAGE_LIMIT }}"
+            }
+          ]
+        },
+        "options": {
+          "pagination": {
+            "pagination": {
+              "parameters": {
+                "parameters": [
+                  {
+                    "name": "offset",
+                    "value": "={{ $pageCount * $('CONFIG').first().json.PAGE_LIMIT }}"
+                  }
+                ]
+              },
+              "paginationCompleteWhen": "other",
+              "completeExpression": "={{ $response.body.data.length < $('CONFIG').first().json.PAGE_LIMIT }}",
+              "limitPagesFetched": true,
+              "maxRequests": 50
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_ME",
+          "name": "Softr API key"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "id": "2ed2c2a6-126d-4766-bb61-ffe1f8bd3b76",
+      "name": "PICK ROWS",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// Deliveries with a folder that are waiting for files or already uploaded. One item per row.\nconst cfg = $('CONFIG').first().json;\nconst s = (v) => String(v == null ? '' : v).trim();\nconst label = (v) => (v && typeof v === 'object' ? s(v.label) : s(v));\nconst f = (r, id) => (r.fields || {})[id];\n\nconst rows = $input.all().flatMap((i) => i.json.data || []);\nconst todo = rows.filter((r) => s(f(r, cfg.FF_FOLDER)) && s(f(r, cfg.FF_CASE_ID)) &&\n  cfg.STATUSES.includes(label(f(r, cfg.FF_STATUS))));\nif (todo.length > cfg.MAX_ROWS) {\n  throw new Error(`${todo.length} open deliveries, more than the limit of ${cfg.MAX_ROWS}. Nothing was done.`);\n}\nreturn todo.map((r) => ({ json: {\n  recordId: r.id,\n  caseId: s(f(r, cfg.FF_CASE_ID)),\n  folderId: s(f(r, cfg.FF_FOLDER)),\n  arrival: s(f(r, cfg.FF_DATE)).slice(0, 10),\n} }));\n"
+      }
+    },
+    {
+      "id": "18804c80-694a-461d-96b3-10cb2166544e",
+      "name": "Any Files?",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        0
+      ],
+      "parameters": {
+        "url": "https://www.googleapis.com/drive/v3/files",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleDriveOAuth2Api",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "q",
+              "value": "={{ \"'\" + $json.folderId + \"' in parents and trashed=false\" }}"
+            },
+            {
+              "name": "pageSize",
+              "value": "1"
+            },
+            {
+              "name": "fields",
+              "value": "files(id)"
+            },
+            {
+              "name": "supportsAllDrives",
+              "value": "true"
+            },
+            {
+              "name": "includeItemsFromAllDrives",
+              "value": "true"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "REPLACE_ME",
+          "name": "Google Drive account"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "id": "eb412cce-fd53-47e2-a7d7-6c0453fe5250",
+      "name": "Read Open Cases",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1100,
+        0
+      ],
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "YOUR_CASE_TRACKER_SHEET_ID"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "id",
+          "value": "YOUR_OPEN_CASES_TAB_GID"
+        },
+        "options": {}
+      },
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "REPLACE_ME",
+          "name": "Google Sheets account"
+        }
+      },
+      "executeOnce": true
+    },
+    {
+      "id": "31a8829b-470b-4c76-ba5c-818be9a3a09b",
+      "name": "GROUP",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// One item per case that has at least one delivery with something in it. Drive was asked for one\n// file id per folder (ids only). A folder Drive could not read goes to Google anyway, which names\n// the reason. A case missing from Open Cases or without a My Documents folder is a problem.\nconst cfg = $('CONFIG').first().json;\nconst s = (v) => String(v == null ? '' : v).trim();\nconst rows = $('PICK ROWS').all().map((i) => i.json);\nconst checks = $('Any Files?').all().map((i) => i.json);\nconst cases = {};\n$('Read Open Cases').all().forEach((i) => { if (s(i.json.CaseID)) cases[s(i.json.CaseID)] = i.json; });\n\nconst out = {};\nconst problems = [];\nrows.forEach((r, n) => {\n  const c = checks[n] || {};\n  const listed = c.statusCode === 200 && c.body && Array.isArray(c.body.files);\n  if (listed && !c.body.files.length) return;   // still waiting for files\n  const oc = cases[r.caseId];\n  if (!oc) { problems.push(`${r.caseId}: case not found in Open Cases`); return; }\n  const myDocs = s(oc.FolderID_MyDocuments);\n  if (!myDocs) { problems.push(`${r.caseId}: no My Documents folder`); return; }\n  if (!out[r.caseId]) {\n    const name = s(oc['Case Name']);\n    // The plaintiff's surname, as in the delivery folder names: \"Sample, Jordan v. ...\" -> \"Sample\".\n    const head = s(name.split(/\\s+v\\.?\\s+/i)[0].replace(/\\s+et\\.?\\s+al\\.?$/i, ''));\n    const surname = s(head.split(',')[0]) || name;\n    out[r.caseId] = {\n      caseId: r.caseId, myDocs, rowNumber: oc.row_number,\n      sheetId: s(oc.FileID_FilesReceivedIndexed),\n      sheetName: cfg.SHEET_PREFIX + surname,\n      plaintiff: s(oc.Plaintiff),\n      pendingFolderId: s(oc.FolderID_PendingAssignment),   // numbered files so far\n      providersSheetId: s(oc.FileID_ProviderList),         // providers already known\n      deliveries: [],\n    };\n  }\n  out[r.caseId].deliveries.push({ row_id: r.recordId, folder_id: r.folderId, arrival_date: r.arrival });\n});\nconst staticData = $getWorkflowStaticData('global');\nstaticData.problems = problems;   // read again by FINISH, so a stop here still reports them\nconst items = Object.values(out).map((json) => ({ json }));\nif (!items.length && problems.length) throw new Error('Index Delivery Files: ' + problems.join('; '));\nreturn items;\n"
+      }
+    },
+    {
+      "id": "3b9cf150-75bc-4a75-a2a7-117e2e49bce3",
+      "name": "Loop Over Cases",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        1540,
+        0
+      ],
+      "parameters": {
+        "options": {}
+      }
+    },
+    {
+      "id": "ad4cb31f-c64d-4cb1-846e-b261d3c958d0",
+      "name": "Needs Sheet?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1760,
+        100
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "d06a619c-1d28-4766-bbe0-1218d5e6b939",
+              "leftValue": "={{ !$json.sheetId }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      }
+    },
+    {
+      "id": "a2634e5e-5709-497b-bd19-904c64693b1c",
+      "name": "Create Sheet",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1980,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://www.googleapis.com/drive/v3/files?supportsAllDrives=true&fields=id",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleDriveOAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ name: $('Loop Over Cases').first().json.sheetName, mimeType: 'application/vnd.google-apps.spreadsheet', parents: [$('Loop Over Cases').first().json.myDocs] }) }}",
+        "options": {}
+      },
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "REPLACE_ME",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "id": "f55eb993-a35b-4f7a-b1ba-bbfa3a99b2e3",
+      "name": "Save Sheet ID",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        2200,
+        0
+      ],
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "YOUR_CASE_TRACKER_SHEET_ID"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "id",
+          "value": "YOUR_OPEN_CASES_TAB_GID"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "CaseID": "={{ $('Loop Over Cases').first().json.caseId }}",
+            "FileID_FilesReceivedIndexed": "={{ $json.id }}"
+          },
+          "matchingColumns": [
+            "CaseID"
+          ],
+          "schema": [
+            {
+              "id": "CaseID",
+              "displayName": "CaseID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "FileID_FilesReceivedIndexed",
+              "displayName": "FileID_FilesReceivedIndexed",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "REPLACE_ME",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "id": "fdd776e6-4ee6-4270-a2d8-1c6099771f87",
+      "name": "Re-read Open Cases",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1760,
+        -200
+      ],
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "YOUR_CASE_TRACKER_SHEET_ID"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "id",
+          "value": "YOUR_OPEN_CASES_TAB_GID"
+        },
+        "options": {}
+      },
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "REPLACE_ME",
+          "name": "Google Sheets account"
+        }
+      },
+      "executeOnce": true
+    },
+    {
+      "id": "f3ae3df9-1ce7-4a4b-b09f-a8492f97e38c",
+      "name": "BUILD ARGS",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1980,
+        -200
+      ],
+      "parameters": {
+        "jsCode": "// The Google run's argument. Sheet ids are read back from Open Cases, so a sheet that was made but\n// whose id did not save is caught here instead of making a second sheet tomorrow.\nconst cfg = $('CONFIG').first().json;\nconst s = (v) => String(v == null ? '' : v).trim();\nconst saved = {};\n$('Re-read Open Cases').all().forEach((i) => { saved[s(i.json.CaseID)] = s(i.json.FileID_FilesReceivedIndexed); });\nconst problems = $getWorkflowStaticData('global').problems || [];\nconst cases = [];\n$('GROUP').all().forEach((i) => {\n  const c = i.json;\n  const sheetId = saved[c.caseId];\n  if (!sheetId) { problems.push(`${c.caseId}: sheet id did not save`); return; }\n  cases.push({ case_id: c.caseId, sheet_id: sheetId, plaintiff: c.plaintiff, pending_folder_id: c.pendingFolderId,\n               providers_sheet_id: c.providersSheetId, deliveries: c.deliveries,\n               // The Index files button means \"I am done uploading\": no 2-hour quiet wait.\n               ...(cfg.RUN_NOW ? { quiet_hours: 0 } : {}) });\n});\n$getWorkflowStaticData('global').problems = problems;\nif (!cases.length) throw new Error('Index Delivery Files: ' + problems.join('; '));\nreturn [{ json: { argument: JSON.stringify({ cases }) } }];\n"
+      }
+    },
+    {
+      "id": "1d67ce5f-e2e2-4b71-a407-eacd73647bdb",
+      "name": "Start Google Run",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2200,
+        -200
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://workflowexecutions.googleapis.com/v1/projects/YOUR_GCP_PROJECT/locations/YOUR_REGION/workflows/Records-Helper/executions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleOAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ argument: $json.argument }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "googleOAuth2Api": {
+          "id": "REPLACE_ME",
+          "name": "Google Cloud account"
+        }
+      }
+    },
+    {
+      "id": "7cf81d03-0046-4af6-ad9c-4b91ba53adef",
+      "name": "Started?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2420,
+        -200
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "e6dbcc05-f762-4aa0-a9ed-3677894bee78",
+              "leftValue": "={{ $json.statusCode === 200 && !!($json.body && $json.body.name) }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      }
+    },
+    {
+      "id": "cc174f07-c0da-4e82-823a-98c3c3d2a935",
+      "name": "Wait 30 Seconds",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        2640,
+        -300
+      ],
+      "parameters": {
+        "amount": 30
+      }
+    },
+    {
+      "id": "976d8a71-e3fe-42d5-93a7-b4120fb50785",
+      "name": "Check Google Run",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2860,
+        -300
+      ],
+      "parameters": {
+        "url": "=https://workflowexecutions.googleapis.com/v1/{{ $('Start Google Run').first().json.body.name }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleOAuth2Api",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "googleOAuth2Api": {
+          "id": "REPLACE_ME",
+          "name": "Google Cloud account"
+        }
+      }
+    },
+    {
+      "id": "b5b4f12e-08a3-444e-a964-03c0a638c88b",
+      "name": "Still Running?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3080,
+        -300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "ccf54c06-866c-4a3d-b62b-29bcb2d040c7",
+              "leftValue": "={{ $runIndex < 40 && !($json.statusCode === 200 && $json.body && ['SUCCEEDED', 'FAILED', 'CANCELLED'].includes($json.body.state)) }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      }
+    },
+    {
+      "id": "13f8176f-26f5-42d3-9cc1-db7f01b93868",
+      "name": "RESULTS",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3300,
+        -200
+      ],
+      "parameters": {
+        "jsCode": "// Google's reply -> one Softr update per delivery, plus the list of problems for FINISH.\n// Google replies with counts and first names only; no file or folder names reach n8n.\nconst cfg = $('CONFIG').first().json;\nconst r = $input.first().json;\nconst problems = $getWorkflowStaticData('global').problems || [];\nconst patches = [];\nlet result = null;\nif (r.statusCode === 200 && r.body && r.body.state === 'SUCCEEDED') {\n  try { result = JSON.parse(r.body.result); } catch (e) { result = null; }\n}\nif (!result || result.status !== 'ok') {\n  problems.push('Google run did not finish: ' + (result && result.stage ? result.stage : (r.body && r.body.state) || 'no answer'));\n} else {\n  for (const c of result.cases) {\n    if (c.status !== 'ok') { problems.push(`${c.case_id}: ${c.stage}`); continue; }\n    for (const d of c.deliveries) {\n      const fields = {};\n      if (d.status === 'ok') {\n        // Indexed once every PDF has a number or a suggestion; files the\n        // helper could not name make it Needs a look; files left for tomorrow keep it Uploaded.\n        const look = d.needs_look || 0;\n        fields[cfg.FF_STATUS] = d.waiting ? 'Uploaded' : look ? 'Needs a look'\n          : (d.indexed >= (d.to_index || 0) ? 'Indexed' : 'Uploaded');\n        fields[cfg.FF_LOOK] = look ? `${look} file${look === 1 ? '' : 's'} need${look === 1 ? 's' : ''} a look` : '';\n        fields[cfg.FF_ON] = d.uploaded_on;\n        fields[cfg.FF_COUNT] = d.pdfs;\n        fields[cfg.FF_OTHER] = d.other;\n        fields[cfg.FF_INDEXED] = d.indexed || 0;\n        fields[cfg.FF_NUMBERS] = d.numbers || '';\n      } else if (d.status === 'failed' && ['folder_not_found', 'folder_trashed'].includes(d.stage)) {\n        fields[cfg.FF_STATUS] = 'Needs a look';\n        fields[cfg.FF_LOOK] = d.stage === 'folder_trashed' ? 'Delivery folder is in the bin' : 'Delivery folder not found';\n      } else if (d.status === 'failed') {\n        problems.push(`${c.case_id}: delivery ${d.row_id} ${d.stage} ${d.upstream_http_status || ''}`.trim());\n        continue;\n      } else {\n        continue;   // empty, or changed in the last 2 hours: tomorrow\n      }\n      patches.push({\n        url: `https://tables-api.softr.io/api/v1/databases/${cfg.SOFTR_DB}/tables/${cfg.SOFTR_FILES}/records/${d.row_id}`,\n        body: { fields },\n      });\n    }\n  }\n}\n$getWorkflowStaticData('global').problems = problems;\nreturn [{ json: { patches, problems, cases: result && result.cases ? result.cases.length : 0 } }];\n"
+      }
+    },
+    {
+      "id": "58151a15-040b-4214-9fac-5bab900cf0af",
+      "name": "One per Delivery",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        3520,
+        -300
+      ],
+      "parameters": {
+        "fieldToSplitOut": "patches",
+        "options": {}
+      }
+    },
+    {
+      "id": "6bae9113-b36a-4397-9207-3c6aad326c20",
+      "name": "Save to Files Row",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3740,
+        -300
+      ],
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ $json.url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.body) }}",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 700
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_ME",
+          "name": "Softr API key"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "id": "c7ba1643-89f4-4c50-8614-9882517b6aed",
+      "name": "FINISH",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3520,
+        -50
+      ],
+      "parameters": {
+        "jsCode": "// Last step. Any problem fails the run, so your n8n error workflow alerts you (case ids and stage codes only).\nconst problems = $getWorkflowStaticData('global').problems || [];\n$getWorkflowStaticData('global').problems = [];\nif (problems.length) throw new Error('Index Delivery Files: ' + problems.join('; '));\nreturn [{ json: { ok: true, updated: $('RESULTS').first().json.patches.length } }];\n"
+      }
+    }
+  ],
+  "connections": {
+    "Daily 7:30am ET": {
+      "main": [
+        [
+          {
+            "node": "CONFIG",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run Now Trigger": {
+      "main": [
+        [
+          {
+            "node": "CONFIG",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CONFIG": {
+      "main": [
+        [
+          {
+            "node": "Fetch Files",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Files": {
+      "main": [
+        [
+          {
+            "node": "PICK ROWS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PICK ROWS": {
+      "main": [
+        [
+          {
+            "node": "Any Files?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Any Files?": {
+      "main": [
+        [
+          {
+            "node": "Read Open Cases",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Open Cases": {
+      "main": [
+        [
+          {
+            "node": "GROUP",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GROUP": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Cases",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Cases": {
+      "main": [
+        [
+          {
+            "node": "Re-read Open Cases",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Needs Sheet?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Needs Sheet?": {
+      "main": [
+        [
+          {
+            "node": "Create Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Loop Over Cases",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Sheet": {
+      "main": [
+        [
+          {
+            "node": "Save Sheet ID",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Sheet ID": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Cases",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Re-read Open Cases": {
+      "main": [
+        [
+          {
+            "node": "BUILD ARGS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "BUILD ARGS": {
+      "main": [
+        [
+          {
+            "node": "Start Google Run",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Start Google Run": {
+      "main": [
+        [
+          {
+            "node": "Started?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Started?": {
+      "main": [
+        [
+          {
+            "node": "Wait 30 Seconds",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "RESULTS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait 30 Seconds": {
+      "main": [
+        [
+          {
+            "node": "Check Google Run",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Google Run": {
+      "main": [
+        [
+          {
+            "node": "Still Running?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Still Running?": {
+      "main": [
+        [
+          {
+            "node": "Wait 30 Seconds",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "RESULTS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "RESULTS": {
+      "main": [
+        [
+          {
+            "node": "One per Delivery",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "FINISH",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "One per Delivery": {
+      "main": [
+        [
+          {
+            "node": "Save to Files Row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

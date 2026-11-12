@@ -1,0 +1,60 @@
+{
+  "_note": "Entirely made-up sample data. No real people, providers, cases or files.",
+  "run_time": "2025-03-04T12:30:00+00:00",
+  "case_id": "DEMO-001",
+  "plaintiff": "Jordan Sample",
+  "known_providers": [
+    "Lakeside Orthopedics",
+    "Riverbend Physical Therapy",
+    "Northgate Imaging Center",
+    "Hillview Medical Group"
+  ],
+  "working_folder": [
+    {"id": "demo-old-1", "name": "1 - Hillview Medical Group.pdf", "mimeType": "application/pdf"},
+    {"id": "demo-old-2", "name": "2 - Northgate Imaging Center.pdf", "mimeType": "application/pdf"}
+  ],
+  "deliveries": [
+    {
+      "name": "Delivery 2025-03-03",
+      "folder_id": "demo-folder-a",
+      "arrival_date": "2025-03-03",
+      "files": [
+        {"id": "demo-file-01", "name": "Lakeside Orthopedics records 01-15-2024 to 06-30-2024.pdf",
+         "mimeType": "application/pdf", "size": "2516582", "createdTime": "2025-03-03T15:01:00Z",
+         "owners": [{"displayName": "Alex Example", "emailAddress": "alex@example.com"}]},
+        {"id": "demo-file-02", "name": "SCAN_00417.pdf",
+         "mimeType": "application/pdf", "size": "870400", "createdTime": "2025-03-03T15:02:00Z",
+         "owners": [{"displayName": "Alex Example", "emailAddress": "alex@example.com"}]},
+        {"id": "demo-file-03", "name": "Riverbend PT Bills.pdf",
+         "mimeType": "application/pdf", "size": "412000", "createdTime": "2025-03-03T15:03:00Z",
+         "owners": [{"displayName": "Alex Example", "emailAddress": "alex@example.com"}]},
+        {"id": "demo-file-04", "name": "Plaintiff Interrogatory Responses.pdf",
+         "mimeType": "application/pdf", "size": "205000", "createdTime": "2025-03-03T15:04:00Z",
+         "owners": [{"displayName": "Alex Example", "emailAddress": "alex@example.com"}]},
+        {"id": "demo-file-05", "name": "Records Index.pdf",
+         "mimeType": "application/pdf", "size": "51000", "createdTime": "2025-03-03T15:05:00Z",
+         "owners": [{"displayName": "Alex Example", "emailAddress": "alex@example.com"}]},
+        {"id": "demo-file-06", "name": "photos.zip",
+         "mimeType": "application/zip", "size": "73400320", "createdTime": "2025-03-03T15:06:00Z",
+         "owners": [{"displayName": "Alex Example", "emailAddress": "alex@example.com"}]},
+        {"id": "demo-file-07", "name": "fax_0093.pdf",
+         "mimeType": "application/pdf", "size": "98000", "createdTime": "2025-03-03T15:07:00Z",
+         "owners": [{"displayName": "Alex Example", "emailAddress": "alex@example.com"}]}
+      ]
+    }
+  ],
+  "saved_ai_answers": {
+    "_note": "Made-up answers in the exact shape Gemini returns (see reader.SCHEMA).",
+    "demo-file-02": {"from_a_provider": true, "main_provider": "Northgate Imaging Center",
+                     "all_providers": ["Northgate Imaging Center"], "document_type": "",
+                     "record_type": "Imaging", "plaintiff": "", "confident": true},
+    "demo-file-03": {"from_a_provider": true, "main_provider": "Riverbend Physical Therapy",
+                     "all_providers": ["Riverbend Physical Therapy"], "document_type": "",
+                     "record_type": "Bills", "plaintiff": "", "confident": true},
+    "demo-file-04": {"from_a_provider": false, "main_provider": "", "all_providers": [],
+                     "document_type": "Interrogatories", "record_type": "Legal", "plaintiff": "",
+                     "confident": true},
+    "demo-file-07": {"from_a_provider": true, "main_provider": "", "all_providers": [],
+                     "document_type": "", "record_type": "Other", "plaintiff": "", "confident": false}
+  }
+}

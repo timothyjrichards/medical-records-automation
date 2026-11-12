@@ -1,0 +1,38 @@
+# Records-Helper: n8n starts this each morning with
+#   {cases: [{case_id, sheet_id, plaintiff, deliveries: [{row_id, folder_id, arrival_date}]}]}
+# The result n8n reads back is counts, statuses and uploaders' first names - never a file name (patient data stays inside Google Cloud).
+main:
+  params: [args]
+  steps:
+    - callHelper:
+        try:
+          call: http.post
+          args:
+            url: https://YOUR_CLOUD_RUN_SERVICE_URL/index
+            auth:
+              type: OIDC
+              audience: https://YOUR_CLOUD_RUN_SERVICE_URL
+            timeout: 1800
+            body:
+              cases: ${default(map.get(args, "cases"), [])}
+          result: response
+        except:
+          as: e
+          steps:
+            - readStage:
+                assign:
+                  - stage: "call_failed"
+            - maybeStage:
+                switch:
+                  - condition: ${get_type(map.get(e, "body")) == "map"}
+                    steps:
+                      - takeStage:
+                          assign:
+                            - stage: ${default(map.get(e.body, "stage"), "call_failed")}
+            - failed:
+                return:
+                  status: failed
+                  stage: ${stage}
+                  http_status: ${default(map.get(e, "code"), 0)}
+    - done:
+        return: ${response.body}

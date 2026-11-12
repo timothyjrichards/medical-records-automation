@@ -1,0 +1,20 @@
+{
+  "rows_added": 7,
+  "files_renamed": 3,
+  "ai_reads": 4,
+  "deliveries": [
+    {
+      "delivery": "Delivery 2025-03-03",
+      "status": "ok",
+      "pdfs": 6,
+      "other": 1,
+      "uploaded_by": "Alex",
+      "uploaded_on": "2025-03-03T15:01:00Z",
+      "to_index": 4,
+      "indexed": 3,
+      "needs_look": 1,
+      "waiting": 0,
+      "numbers": "3\u20135"
+    }
+  ]
+}
